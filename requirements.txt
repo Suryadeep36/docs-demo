@@ -4,4 +4,3 @@ numpy
 PyMuPDF
 pillow
 paddleocr
-paddlepaddle
