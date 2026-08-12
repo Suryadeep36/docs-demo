@@ -9,7 +9,7 @@ function App() {
   const [result, setResult] = useState(null)
 
   const apiUrl = useMemo(() => {
-    return import.meta.env.VITE_DOC_TYPE_API_URL || '/api/document-type'
+    return "http://localhost:5678/webhook-test/classify-document" || '/api/document-type'
   }, [])
 
   function onFilePicked(file) {
