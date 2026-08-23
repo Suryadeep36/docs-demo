@@ -147,6 +147,90 @@ button:disabled {
   font-size: 15px;
 }
 
+/* Editable fields */
+input[type="text"] {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #cdd5e4;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #1f2a44;
+  background: #fbfcff;
+  box-sizing: border-box;
+}
+
+input[type="text"]:focus {
+  outline: none;
+  border-color: #1a73e8;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.12);
+}
+
+input[type="text"]:disabled {
+  opacity: 0.6;
+}
+
+.mark-pair {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cell-narrow {
+  min-width: 80px;
+}
+
+.cell-mark {
+  width: 52px;
+  min-width: 52px;
+  text-align: center;
+  padding: 6px 4px !important;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.status {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #b9d3f5;
+  background: #eef5ff;
+  color: #1a55a8;
+}
+
+.save-bar {
+  margin-top: 24px;
+}
+
+.save-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.save-actions button {
+  margin-top: 0;
+  width: auto;
+  padding: 11px 22px;
+}
+
+.save-actions button.secondary {
+  background: #ffffff;
+  color: #2f3952;
+  border: 1px solid #cdd5e4;
+}
+
+.save-error {
+  margin: 0 0 10px;
+  color: #a02639;
+  font-size: 14px;
+  text-align: right;
+}
+
 .table-wrapper {
   overflow-x: auto;
 }

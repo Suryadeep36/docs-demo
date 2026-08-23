@@ -6,3 +6,8 @@ Pillow
 python-multipart
 paddleocr
 paddlepaddle
+sqlalchemy
+alembic
+psycopg2-binary
+pydantic-settings
+python-dotenv

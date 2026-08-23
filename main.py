@@ -1,4 +1,6 @@
 import os
+import uuid
+from datetime import datetime, timezone
 
 # =========================================================
 # Disable PIR & MKLDNN to fix the ConvertPirAttribute crash
@@ -13,7 +15,9 @@ import fitz  # PyMuPDF
 import numpy as np
 import torch
 from PIL import Image
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 from paddleocr import PaddleOCR
 from transformers import (
     TrOCRProcessor,
@@ -22,7 +26,19 @@ from transformers import (
     RobertaTokenizer,
 )
 
+from database import get_db
+from models import Document, Extraction, UPLOAD_DIR
+import schemas
+
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # =========================================================
 # PaddleOCR Engine Setup (MKLDNN set to False)
@@ -398,8 +414,135 @@ def recognize(file: UploadFile = File(...)):
         lines = smart_ocr(image)
         return {"type": "image", "text": "\n".join(lines), "lines": lines}
 
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail="Unsupported file format. Please upload a PDF or an image (PNG, JPG, JPEG, WEBP, TIFF).",
-        )
+# =========================================================
+# DOCUMENT + EXTRACTION ENDPOINTS
+# =========================================================
+
+def _save_upload(file_bytes: bytes, original_filename: str) -> str:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    ext = os.path.splitext(original_filename)[1].lower() or ".bin"
+    stored_name = f"{uuid.uuid4().hex}{ext}"
+    file_path = os.path.join(UPLOAD_DIR, stored_name)
+    with open(file_path, "wb") as f:
+        f.write(file_bytes)
+    return file_path
+
+
+@app.post("/documents", response_model=schemas.DocumentOut, status_code=201)
+async def create_document(
+    file: UploadFile | None = File(None),
+    original_filename: str | None = Form(None),
+    document_type: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Creates a document record. Accepts multipart form data:
+      - file (optional): the PDF/image to persist under uploads/
+      - original_filename: fallback name when no file is attached
+      - document_type: e.g. 'marksheet'
+    n8n calls this first, runs OCR/LLM, then POSTs the extraction.
+    """
+    filename = original_filename or (file.filename if file else None)
+    if not filename:
+        raise HTTPException(status_code=422, detail="Provide a file or original_filename.")
+
+    file_path = None
+    mime_type = None
+    if file is not None:
+        file_bytes = await file.read()
+        if file_bytes:
+            file_path = _save_upload(file_bytes, os.path.basename(filename))
+            mime_type = file.content_type
+
+    document = Document(
+        original_filename=os.path.basename(filename),
+        file_path=file_path,
+        mime_type=mime_type,
+        document_type=document_type,
+        status="processing",
+    )
+    db.add(document)
+    db.commit()
+    db.refresh(document)
+    return document
+
+
+@app.get("/documents/{document_id}", response_model=schemas.DocumentOut)
+def get_document(document_id: uuid.UUID, db: Session = Depends(get_db)):
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return document
+
+
+@app.get(
+    "/documents/{document_id}/extraction",
+    response_model=schemas.DocumentWithExtraction,
+)
+def get_extraction(document_id: uuid.UUID, db: Session = Depends(get_db)):
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return document
+
+
+@app.post(
+    "/documents/{document_id}/extraction",
+    response_model=schemas.ExtractionOut,
+    status_code=201,
+)
+def create_extraction(
+    document_id: uuid.UUID,
+    payload: schemas.ExtractionCreate,
+    db: Session = Depends(get_db),
+):
+    """Called by n8n after OCR + LLM to store raw and parsed extraction."""
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if document.extraction is not None:
+        raise HTTPException(status_code=409, detail="Extraction already exists")
+
+    extraction = Extraction(
+        document_id=document.id,
+        raw_llm_output=payload.raw_llm_output,
+        extracted_data=payload.extracted_data,
+    )
+    document.document_type = payload.document_type or document.document_type
+    document.status = "completed"
+    db.add(extraction)
+    db.commit()
+    db.refresh(extraction)
+    return extraction
+
+
+@app.put(
+    "/documents/{document_id}/extraction",
+    response_model=schemas.ExtractionOut,
+)
+def update_extraction(
+    document_id: uuid.UUID,
+    payload: schemas.ExtractionUpdate,
+    db: Session = Depends(get_db),
+):
+    """Saves user-corrected fields. raw_llm_output is never touched here."""
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if document.extraction is None:
+        raise HTTPException(status_code=404, detail="Extraction not found")
+
+    extraction = document.extraction
+    extraction.extracted_data = payload.extracted_data
+    if payload.finalize:
+        extraction.finalized_at = datetime.now(timezone.utc)
+        document.status = "finalized"
+    db.commit()
+    db.refresh(extraction)
+    return extraction
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
