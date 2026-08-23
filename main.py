@@ -16,6 +16,7 @@ import numpy as np
 import torch
 from PIL import Image
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from paddleocr import PaddleOCR
@@ -31,6 +32,7 @@ from models import Document, Extraction, UPLOAD_DIR
 import schemas
 
 app = FastAPI()
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 app.add_middleware(
     CORSMiddleware,
@@ -465,6 +467,12 @@ async def create_document(
     db.commit()
     db.refresh(document)
     return document
+
+
+@app.get("/documents", response_model=list[schemas.DocumentOut])
+def get_documents(db: Session = Depends(get_db)):
+    documents = db.query(Document).order_by(Document.created_at.desc()).all()
+    return documents
 
 
 @app.get("/documents/{document_id}", response_model=schemas.DocumentOut)

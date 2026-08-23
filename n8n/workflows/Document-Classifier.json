@@ -3,6 +3,177 @@
   "nodes": [
     {
       "parameters": {
+        "content": "Document Classification + Marksheet Extraction Pipeline\n\n1. POST a PDF or image (raw binary body) to the webhook.\n2. File type is detected (PDF / image / unsupported).\n3. PDFs and images are sent to the external OCR server (POST /ocr, multipart field \"file\").\n4. The extracted text is classified by an LLM chain against the documentTypes list.\n   - Returns strict JSON: { document_type, confidence }.\n5. \"Is Marksheet?\" checks the classified type against the 4 marksheet types\n   (CBSE / GSEB / ICSC / College Marksheet).\n   - TRUE  -> \"Clean Marksheet Text\" shrinks the OCR text (removes noise +\n     caps length), then \"Extract Marksheet Data\"\n     runs a second LLM call and returns structured marksheet JSON.\n   - FALSE -> the plain classification JSON is returned.\n\nSetup needed:\n- Google Gemini credential (on \"Gemini Chat Model\" and \"Gemini Extract Model\").\n- OCR server URL in the \"Call OCR Server\" HTTP node (default: http://host.docker.internal:8000/ocr).",
+        "height": 560,
+        "width": 520
+      },
+      "id": "cf854458-3e8a-470f-a912-93c90c914ba0",
+      "name": "Sticky Note a3d4ec",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -832,
+        2192
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "classify-document",
+        "responseMode": "responseNode",
+        "options": {
+          "binaryPropertyName": "data"
+        }
+      },
+      "id": "c4c9c98c-7864-45b0-a8a9-29d3a01615b6",
+      "name": "Upload Document1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1840,
+        1792
+      ],
+      "webhookId": "8423cd27-34e0-4bb6-a4c0-2369d32e327f"
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = [];\n\nfor (const item of items) {\n    const binary = item.binary || {};\n\n    const firstKey = Object.keys(binary)[0];\n    const file = firstKey ? binary[firstKey] : null;\n\n    const mime = file?.mimeType || \"\";\n\n    let fileType = \"unsupported\";\n\n    if (mime === \"application/pdf\") {\n        fileType = \"pdf\";\n    } else if (mime.startsWith(\"image/\")) {\n        fileType = \"image\";\n    }\n\n    // Normalize the uploaded file to a fixed binary key \"file\"\n    // so the OCR HTTP node can reference it reliably.\n    results.push({\n        json: {\n            fileType,\n            mimeType: mime,\n            fileName: file?.fileName || \"\"\n        },\n        binary: file ? { file } : {}\n    });\n}\n\nreturn results;"
+      },
+      "id": "da751088-198b-45a1-aaa5-59be6dd93e8a",
+      "name": "Determine File Type1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1616,
+        1792
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-supported",
+              "leftValue": "={{ $json.fileType }}",
+              "rightValue": "unsupported",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a183f0b1-04b8-46c9-8107-f3d6d8d92800",
+      "name": "Is Supported?1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1392,
+        1792
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/ocr",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "file"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bc2e793a-d9c4-486c-b2f3-6c2e763a7840",
+      "name": "Call OCR Server1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -1168,
+        1696
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================\n// Supported Document Types\n// =========================\n\nconst documentTypes = [\n\n  // Identity\n  \"Aadhaar Card\",\n  \"PAN Card\",\n  \"Passport\",\n  \"Driving License\",\n  \"Voter ID\",\n  \"Employee ID Card\",\n  \"Student ID Card\",\n\n  // Education\n  \"CBSE Marksheet (Central Board of Secondary Education)\",\n  \"GSEB Marksheet (Gujarat Secondary and Higher Secondary Education Board)\",\n  \"ICSC Marksheet (Indian Certificate of Secondary Education)\",\n  \"College Marksheet\",\n  \"Degree Certificate\",\n  \"Diploma Certificate\",\n  \"Transfer Certificate\",\n  \"Leaving Certificate\",\n  \"Migration Certificate\",\n  \"Bonafide Certificate\",\n\n  // Resume\n  \"Resume\",\n  \"Curriculum Vitae (CV)\",\n\n  // Business\n  \"Purchase Order\",\n  \"Invoice\",\n  \"Proforma Invoice\",\n  \"Receipt\",\n  \"Quotation\",\n  \"Purchase Bill\",\n  \"Sales Order\",\n  \"Delivery Note\",\n  \"Credit Note\",\n  \"Debit Note\",\n\n  // Financial\n  \"Bank Statement\",\n  \"Passbook\",\n  \"Cheque\",\n  \"Cancelled Cheque\",\n  \"Salary Slip\",\n  \"Form 16\",\n  \"Income Tax Return\",\n\n  // Government\n  \"Birth Certificate\",\n  \"Death Certificate\",\n  \"Marriage Certificate\",\n  \"Income Certificate\",\n  \"Caste Certificate\",\n  \"Domicile Certificate\",\n\n  // Utility\n  \"Electricity Bill\",\n  \"Water Bill\",\n  \"Gas Bill\",\n  \"Telephone Bill\",\n  \"Internet Bill\",\n\n  // Medical\n  \"Medical Report\",\n  \"Prescription\",\n  \"Lab Report\",\n  \"Discharge Summary\",\n\n  // Insurance\n  \"Insurance Policy\",\n  \"Insurance Claim\",\n\n  // Legal\n  \"Contract\",\n  \"Agreement\",\n  \"Non-Disclosure Agreement (NDA)\",\n  \"Affidavit\",\n  \"Court Order\",\n\n  // Travel\n  \"Flight Ticket\",\n  \"Train Ticket\",\n  \"Bus Ticket\",\n  \"Boarding Pass\",\n  \"Hotel Booking\",\n\n  // Other\n  \"Unknown\"\n];\n\nreturn items.map(item => {\n\n    const resp = item.json || {};\n\n    let text = '';\n\n    if (resp.type === 'pdf') {\n        text = resp.full_text || '';\n    } else if (resp.type === 'image') {\n        text = resp.text || '';\n    } else {\n        text =\n            resp.full_text ||\n            resp.text ||\n            (Array.isArray(resp.lines)\n                ? resp.lines.join('\\n')\n                : '');\n    }\n\n    return {\n        json: {\n            extractedText: text.trim(),\n            documentTypes,\n            sourceType: resp.type || 'unknown',\n            totalPages: resp.total_pages || 1,\n            charCount: text.trim().length\n        }\n    };\n\n});"
+      },
+      "id": "b865073d-433a-411f-b509-6f9f72136ae8",
+      "name": "Parse OCR Result1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -944,
+        1696
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an expert OCR Document Classification System.\n\nYour task is to classify a document using ONLY the OCR extracted text.\n\n==============================\nOCR TEXT\n==============================\n\n{{$json.extractedText}}\n\n==============================\nAVAILABLE DOCUMENT TYPES\n==============================\n\n{{$json.documentTypes}}\n\n==============================\nINSTRUCTIONS\n==============================\n\nRead the OCR extracted text carefully and determine the document type.\n\nStep 1: Check against AVAILABLE DOCUMENT TYPES\n• Review the OCR text for key identifiers such as document title, headings, issuing authority (Government, University, Board, Bank, Company), certificate names, structural markers, and specific keywords.\n• If a matching document type exists in the provided list, select the MOST SPECIFIC one.\n\nStep 2: Fallback Identification (If Type is Unknown or Not Listed)\n• If the document does not match any type in AVAILABLE DOCUMENT TYPES, or if the provided list is empty, DO NOT return \"Unknown\".\n• Use your domain knowledge to independently identify and assign the most accurate, standardized document category based on the content, structure, and context (e.g., \"Driving License\", \"Utility Bill\", \"Tax Return\", \"Rental Agreement\", etc.).\n\n==============================\nREFERENCE KEYWORD EXAMPLES\n==============================\n\nResume: Curriculum Vitae, Professional Summary, Experience, Skills\nPurchase Order: Purchase Order, PO Number, Supplier, Order Date\nInvoice: Tax Invoice, GST, Invoice Number, Total Due\nReceipt: Receipt, Payment Received, Amount Paid\nAadhaar Card: Government of India, Unique Identification Authority, UIDAI\nPAN Card: Income Tax Department, Permanent Account Number\nSSC / HSC Marksheet: Secondary / Higher Secondary Certificate, Board, Marks, Percentage\nCollege Marksheet: Semester, University, SGPA, CGPA, Grade Card\nDegree Certificate: Bachelor, Master, Doctorate, Awarded to\nBank Statement: Statement Period, Account Number, Debit/Credit, Opening Balance\nSalary Slip: Pay Slip, Gross Salary, Net Salary, Deductions\nElectricity Bill: Consumer ID, Units Consumed, Tariff, Due Date\nMedical Report: Diagnosis, Patient Name, Lab Results, Hospital/Doctor\nContract / Agreement: Terms and Conditions, Parties, Witness, Signature\n\n==============================\nOUTPUT FORMAT\n==============================\n\nReturn ONLY valid JSON. No conversational text or markdown explanation outside the JSON.\n\n{\n  \"output\": {\n    \"document_type\": \"<Identified Document Type>\",\n    \"confidence\": 0.95\n  }\n}",
+        "hasOutputParser": true,
+        "batching": {}
+      },
+      "id": "f82fd506-03f5-41b8-915a-607e1d4def52",
+      "name": "Classify Document1",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        -720,
+        1696
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": {
+          "maxOutputTokens": 4096,
+          "temperature": 0
+        }
+      },
+      "id": "b799be5c-65c1-4408-81d4-eeb7b568ff53",
+      "name": "Gemini Chat Model1",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        -704,
+        1920
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "e0zryuqJE5zjrukt",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"document_type\": \"Invoice\",\n  \"confidence\": 0.95\n}"
+      },
+      "id": "1c7ef1bb-0ec4-4626-b1f6-3b7a285ee311",
+      "name": "Classification Parser1",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        -576,
+        1920
+      ]
+    },
+    {
+      "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
@@ -52,26 +223,26 @@
         },
         "options": {}
       },
-      "id": "5ea67844-eb5b-4e4b-81eb-af61b85d2861",
-      "name": "Is Marksheet?",
+      "id": "881a9a52-6f4b-48ad-85a0-8d69de6c54ee",
+      "name": "Is Marksheet?1",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1024,
-        1536
+        -368,
+        1888
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Reduce OCR text size before the extraction LLM call so we stay under\n// Groq's tokens-per-minute (TPM) limit. Marksheets are mostly short lines +\n// numbers; most tokens are wasted whitespace and layout noise from OCR.\n\n// Cap so prompt + text stays well under the 8000 TPM window.\nconst MAX_CHARS = 5000;\n\nreturn items.map(item => {\n    const src = $('Parse OCR Result1').item.json;\n    let text = (src && src.extractedText) || '';\n\n    text = text\n        // normalize newlines\n        .replace(/\\r\\n?/g, '\\n')\n        // collapse runs of spaces/tabs into a single space\n        .replace(/[ \\t]{2,}/g, ' ')\n        // strip trailing spaces on each line\n        .replace(/[ \\t]+\\n/g, '\\n')\n        // collapse 3+ blank lines into a single blank line\n        .replace(/\\n{3,}/g, '\\n\\n')\n        // drop lines that carry no letters or digits (pure separators/symbols)\n        .split('\\n')\n        .filter(line => /[A-Za-z0-9]/.test(line))\n        .join('\\n')\n        .trim();\n\n    let truncated = false;\n    if (text.length > MAX_CHARS) {\n        text = text.slice(0, MAX_CHARS);\n        truncated = true;\n    }\n\n    return {\n        json: {\n            cleanedText: text,\n            cleanedCharCount: text.length,\n            originalCharCount: (src && src.charCount) || 0,\n            truncated,\n            documentType: $('Classify Document1').item.json.output.document_type\n        }\n    };\n});"
+        "jsCode": "// Reduce OCR text size before the extraction LLM call so we stay under\n// the model tokens-per-minute (TPM) limit. Marksheets are mostly short lines +\n// numbers; most tokens are wasted whitespace and layout noise from OCR.\n\n// Cap so prompt + text stays well under the TPM window.\nconst MAX_CHARS = 5000;\n\nreturn items.map(item => {\n    const src = $('Parse OCR Result1').item.json;\n    let text = (src && src.extractedText) || '';\n\n    text = text\n        // normalize newlines\n        .replace(/\\r\\n?/g, '\\n')\n        // collapse runs of spaces/tabs into a single space\n        .replace(/[ \\t]{2,}/g, ' ')\n        // strip trailing spaces on each line\n        .replace(/[ \\t]+\\n/g, '\\n')\n        // collapse 3+ blank lines into a single blank line\n        .replace(/\\n{3,}/g, '\\n\\n')\n        // drop lines that carry no letters or digits (pure separators/symbols)\n        .split('\\n')\n        .filter(line => /[A-Za-z0-9]/.test(line))\n        .join('\\n')\n        .trim();\n\n    let truncated = false;\n    if (text.length > MAX_CHARS) {\n        text = text.slice(0, MAX_CHARS);\n        truncated = true;\n    }\n\n    return {\n        json: {\n            cleanedText: text,\n            cleanedCharCount: text.length,\n            originalCharCount: (src && src.charCount) || 0,\n            truncated,\n            documentType: $('Classify Document1').item.json.output.document_type\n        }\n    };\n});"
       },
-      "id": "fd6b3f2d-85fe-456b-984b-598242693f6c",
-      "name": "Clean Marksheet Text",
+      "id": "9dcec5f3-d11a-4afe-bf3e-35b45a2010dc",
+      "name": "Clean Marksheet Text1",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1248,
-        1248
+        -144,
+        1600
       ]
     },
     {
@@ -81,35 +252,35 @@
         "hasOutputParser": true,
         "batching": {}
       },
-      "id": "5781d3fe-bbb6-4a10-9db7-bcf733066e82",
-      "name": "Extract Marksheet Data",
+      "id": "c0cfec34-8c9c-41b1-817c-cef5b0ab7e9b",
+      "name": "Extract Marksheet Data1",
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
       "typeVersion": 1.9,
       "position": [
-        1280,
-        1520
+        -112,
+        1872
       ]
     },
     {
       "parameters": {
-        "model": "llama-3.3-70b-versatile",
+        "modelName": "models/gemini-2.5-flash",
         "options": {
-          "maxTokensToSample": 8192,
+          "maxOutputTokens": 8192,
           "temperature": 0
         }
       },
-      "id": "288b8c34-32e0-4f46-a794-6c08bf1af459",
-      "name": "Groq Extract Model",
-      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
-      "typeVersion": 1,
+      "id": "ae9962fc-b244-463c-b720-25487410b5d6",
+      "name": "Gemini Extract Model1",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
       "position": [
-        1296,
-        1744
+        -112,
+        2080
       ],
       "credentials": {
-        "groqApi": {
-          "id": "GO8G0JF59O0zKKmD",
-          "name": "Groq account 2"
+        "googlePalmApi": {
+          "id": "e0zryuqJE5zjrukt",
+          "name": "Google Gemini(PaLM) Api account"
         }
       }
     },
@@ -118,13 +289,13 @@
         "schemaType": "manual",
         "inputSchema": "{\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"type\": \"object\",\n  \"properties\": {\n    \"document_type\": { \"type\": [\"string\", \"null\"] },\n    \"student\": {\n      \"type\": [\"object\", \"null\"],\n      \"properties\": {\n        \"name\": { \"type\": [\"string\", \"null\"] },\n        \"roll_number\": { \"type\": [\"string\", \"null\"] },\n        \"registration_number\": { \"type\": [\"string\", \"null\"] },\n        \"date_of_birth\": { \"type\": [\"string\", \"null\"] }\n      }\n    },\n    \"institution\": {\n      \"type\": [\"object\", \"null\"],\n      \"properties\": {\n        \"name\": { \"type\": [\"string\", \"null\"] },\n        \"board\": { \"type\": [\"string\", \"null\"] },\n        \"course\": { \"type\": [\"string\", \"null\"] },\n        \"semester\": { \"type\": [\"string\", \"null\"] }\n      }\n    },\n    \"subjects\": {\n      \"type\": [\"array\", \"null\"],\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"name\": { \"type\": [\"string\", \"null\"] },\n          \"code\": { \"type\": [\"string\", \"null\"] },\n          \"theory\": {\n            \"type\": [\"object\", \"null\"],\n            \"properties\": {\n              \"obtained\": { \"type\": [\"number\", \"null\"] },\n              \"maximum\": { \"type\": [\"number\", \"null\"] }\n            }\n          },\n          \"practical\": {\n            \"type\": [\"object\", \"null\"],\n            \"properties\": {\n              \"obtained\": { \"type\": [\"number\", \"null\"] },\n              \"maximum\": { \"type\": [\"number\", \"null\"] }\n            }\n          },\n          \"total\": {\n            \"type\": [\"object\", \"null\"],\n            \"properties\": {\n              \"obtained\": { \"type\": [\"number\", \"null\"] },\n              \"maximum\": { \"type\": [\"number\", \"null\"] }\n            }\n          },\n          \"grade\": { \"type\": [\"string\", \"null\"] }\n        }\n      }\n    },\n    \"summary\": {\n      \"type\": [\"object\", \"null\"],\n      \"properties\": {\n        \"total_obtained\": { \"type\": [\"number\", \"null\"] },\n        \"total_maximum\": { \"type\": [\"number\", \"null\"] },\n        \"percentage\": { \"type\": [\"number\", \"null\"] },\n        \"cgpa\": { \"type\": [\"number\", \"null\"] },\n        \"result\": { \"type\": [\"string\", \"null\"] }\n      }\n    }\n  }\n}"
       },
-      "id": "59fe49eb-f2a2-4c5d-8703-fa0be27e378a",
-      "name": "Marksheet Parser",
+      "id": "1ae13c7d-4e05-4dc6-876d-7bacf5aa70d7",
+      "name": "Marksheet Parser1",
       "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
       "typeVersion": 1.3,
       "position": [
-        1472,
-        1744
+        80,
+        2096
       ]
     },
     {
@@ -133,184 +304,13 @@
         "responseBody": "={{ JSON.stringify($json.output) }}",
         "options": {}
       },
-      "id": "df5b815c-b900-44f9-a653-d7584a58a601",
-      "name": "Respond Marksheet",
+      "id": "61b636a2-d1c6-44ce-a0d1-65c5bea8821f",
+      "name": "Respond Marksheet1",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.5,
       "position": [
-        1632,
-        1632
-      ]
-    },
-    {
-      "parameters": {
-        "content": "Document Classification + Marksheet Extraction Pipeline\n\n1. POST a PDF or image (raw binary body) to the webhook.\n2. File type is detected (PDF / image / unsupported).\n3. PDFs and images are sent to the external OCR server (POST /ocr, multipart field \"file\").\n4. The extracted text is classified by an LLM chain against the documentTypes list.\n   - Returns strict JSON: { document_type, confidence }.\n5. \"Is Marksheet?\" checks the classified type against the 4 marksheet types\n   (CBSE / GSEB / ICSC / College Marksheet).\n   - TRUE  -> \"Clean Marksheet Text\" shrinks the OCR text (removes noise +\n     caps length to stay under Groq TPM limit), then \"Extract Marksheet Data\"\n     runs a second LLM call and returns structured marksheet JSON.\n   - FALSE -> the plain classification JSON is returned.\n\nSetup needed:\n- Groq credential (on \"Groq Chat Model\" and \"Groq Extract Model\").\n- OCR server URL in the \"Call OCR Server\" HTTP node (default: http://host.docker.internal:8000/ocr).",
-        "height": 560,
-        "width": 520
-      },
-      "id": "20fcd51d-805a-4a25-9588-eee11da89565",
-      "name": "Sticky Note a3d4ec",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        560,
-        1840
-      ]
-    },
-    {
-      "parameters": {
-        "httpMethod": "POST",
-        "path": "classify-document",
-        "responseMode": "responseNode",
-        "options": {
-          "binaryPropertyName": "data"
-        }
-      },
-      "id": "526333e9-8463-4d60-92e9-c699fccc4685",
-      "name": "Upload Document1",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2.1,
-      "position": [
-        -448,
-        1440
-      ],
-      "webhookId": "8423cd27-34e0-4bb6-a4c0-2369d32e327f"
-    },
-    {
-      "parameters": {
-        "jsCode": "const results = [];\n\nfor (const item of items) {\n    const binary = item.binary || {};\n\n    const firstKey = Object.keys(binary)[0];\n    const file = firstKey ? binary[firstKey] : null;\n\n    const mime = file?.mimeType || \"\";\n\n    let fileType = \"unsupported\";\n\n    if (mime === \"application/pdf\") {\n        fileType = \"pdf\";\n    } else if (mime.startsWith(\"image/\")) {\n        fileType = \"image\";\n    }\n\n    // Normalize the uploaded file to a fixed binary key \"file\"\n    // so the OCR HTTP node can reference it reliably.\n    results.push({\n        json: {\n            fileType,\n            mimeType: mime,\n            fileName: file?.fileName || \"\"\n        },\n        binary: file ? { file } : {}\n    });\n}\n\nreturn results;"
-      },
-      "id": "51d17e0c-cc64-4174-92c4-78539b865302",
-      "name": "Determine File Type1",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -224,
-        1440
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "is-supported",
-              "leftValue": "={{ $json.fileType }}",
-              "rightValue": "unsupported",
-              "operator": {
-                "type": "string",
-                "operation": "notEquals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "e40d5161-7558-484e-839c-c38ab4ec9064",
-      "name": "Is Supported?1",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        0,
-        1440
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://127.0.0.1:8000/ocr",
-        "sendBody": true,
-        "contentType": "multipart-form-data",
-        "bodyParameters": {
-          "parameters": [
-            {
-              "parameterType": "formBinaryData",
-              "name": "file",
-              "inputDataFieldName": "file"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "c25bb001-2747-4a58-97a2-9c1806dc5491",
-      "name": "Call OCR Server1",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        224,
-        1344
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// =========================\n// Supported Document Types\n// =========================\n\nconst documentTypes = [\n\n  // Identity\n  \"Aadhaar Card\",\n  \"PAN Card\",\n  \"Passport\",\n  \"Driving License\",\n  \"Voter ID\",\n  \"Employee ID Card\",\n  \"Student ID Card\",\n\n  // Education\n  \"CBSE Marksheet (Central Board of Secondary Education)\",\n  \"GSEB Marksheet (Gujarat Secondary and Higher Secondary Education Board)\",\n  \"ICSC Marksheet (Indian Certificate of Secondary Education)\",\n  \"College Marksheet\",\n  \"Degree Certificate\",\n  \"Diploma Certificate\",\n  \"Transfer Certificate\",\n  \"Leaving Certificate\",\n  \"Migration Certificate\",\n  \"Bonafide Certificate\",\n\n  // Resume\n  \"Resume\",\n  \"Curriculum Vitae (CV)\",\n\n  // Business\n  \"Purchase Order\",\n  \"Invoice\",\n  \"Proforma Invoice\",\n  \"Receipt\",\n  \"Quotation\",\n  \"Purchase Bill\",\n  \"Sales Order\",\n  \"Delivery Note\",\n  \"Credit Note\",\n  \"Debit Note\",\n\n  // Financial\n  \"Bank Statement\",\n  \"Passbook\",\n  \"Cheque\",\n  \"Cancelled Cheque\",\n  \"Salary Slip\",\n  \"Form 16\",\n  \"Income Tax Return\",\n\n  // Government\n  \"Birth Certificate\",\n  \"Death Certificate\",\n  \"Marriage Certificate\",\n  \"Income Certificate\",\n  \"Caste Certificate\",\n  \"Domicile Certificate\",\n\n  // Utility\n  \"Electricity Bill\",\n  \"Water Bill\",\n  \"Gas Bill\",\n  \"Telephone Bill\",\n  \"Internet Bill\",\n\n  // Medical\n  \"Medical Report\",\n  \"Prescription\",\n  \"Lab Report\",\n  \"Discharge Summary\",\n\n  // Insurance\n  \"Insurance Policy\",\n  \"Insurance Claim\",\n\n  // Legal\n  \"Contract\",\n  \"Agreement\",\n  \"Non-Disclosure Agreement (NDA)\",\n  \"Affidavit\",\n  \"Court Order\",\n\n  // Travel\n  \"Flight Ticket\",\n  \"Train Ticket\",\n  \"Bus Ticket\",\n  \"Boarding Pass\",\n  \"Hotel Booking\",\n\n  // Other\n  \"Unknown\"\n];\n\nreturn items.map(item => {\n\n    const resp = item.json || {};\n\n    let text = '';\n\n    if (resp.type === 'pdf') {\n        text = resp.full_text || '';\n    } else if (resp.type === 'image') {\n        text = resp.text || '';\n    } else {\n        text =\n            resp.full_text ||\n            resp.text ||\n            (Array.isArray(resp.lines)\n                ? resp.lines.join('\\n')\n                : '');\n    }\n\n    return {\n        json: {\n            extractedText: text.trim(),\n            documentTypes,\n            sourceType: resp.type || 'unknown',\n            totalPages: resp.total_pages || 1,\n            charCount: text.trim().length\n        }\n    };\n\n});"
-      },
-      "id": "decf9614-40b2-48e1-87e2-cd8bb671e1d5",
-      "name": "Parse OCR Result1",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        448,
-        1344
-      ]
-    },
-    {
-      "parameters": {
-        "promptType": "define",
-        "text": "=You are an expert OCR Document Classification System.\n\nYour task is to classify a document using ONLY the OCR extracted text.\n\n==============================\nOCR TEXT\n==============================\n\n{{$json.extractedText}}\n\n==============================\nAVAILABLE DOCUMENT TYPES\n==============================\n\n{{$json.documentTypes}}\n\n==============================\nINSTRUCTIONS\n==============================\n\nRead the OCR extracted text carefully and determine the document type.\n\nStep 1: Check against AVAILABLE DOCUMENT TYPES\n• Review the OCR text for key identifiers such as document title, headings, issuing authority (Government, University, Board, Bank, Company), certificate names, structural markers, and specific keywords.\n• If a matching document type exists in the provided list, select the MOST SPECIFIC one.\n\nStep 2: Fallback Identification (If Type is Unknown or Not Listed)\n• If the document does not match any type in AVAILABLE DOCUMENT TYPES, or if the provided list is empty, DO NOT return \"Unknown\".\n• Use your domain knowledge to independently identify and assign the most accurate, standardized document category based on the content, structure, and context (e.g., \"Driving License\", \"Utility Bill\", \"Tax Return\", \"Rental Agreement\", etc.).\n\n==============================\nREFERENCE KEYWORD EXAMPLES\n==============================\n\nResume: Curriculum Vitae, Professional Summary, Experience, Skills\nPurchase Order: Purchase Order, PO Number, Supplier, Order Date\nInvoice: Tax Invoice, GST, Invoice Number, Total Due\nReceipt: Receipt, Payment Received, Amount Paid\nAadhaar Card: Government of India, Unique Identification Authority, UIDAI\nPAN Card: Income Tax Department, Permanent Account Number\nSSC / HSC Marksheet: Secondary / Higher Secondary Certificate, Board, Marks, Percentage\nCollege Marksheet: Semester, University, SGPA, CGPA, Grade Card\nDegree Certificate: Bachelor, Master, Doctorate, Awarded to\nBank Statement: Statement Period, Account Number, Debit/Credit, Opening Balance\nSalary Slip: Pay Slip, Gross Salary, Net Salary, Deductions\nElectricity Bill: Consumer ID, Units Consumed, Tariff, Due Date\nMedical Report: Diagnosis, Patient Name, Lab Results, Hospital/Doctor\nContract / Agreement: Terms and Conditions, Parties, Witness, Signature\n\n==============================\nOUTPUT FORMAT\n==============================\n\nReturn ONLY valid JSON. No conversational text or markdown explanation outside the JSON.\n\n{\n  \"output\": {\n    \"document_type\": \"<Identified Document Type>\",\n    \"confidence\": 0.95\n  }\n}",
-        "hasOutputParser": true,
-        "batching": {}
-      },
-      "id": "c1b6c4af-2bd4-4ac6-ba90-1ff2c71addd5",
-      "name": "Classify Document1",
-      "type": "@n8n/n8n-nodes-langchain.chainLlm",
-      "typeVersion": 1.9,
-      "position": [
-        672,
-        1344
-      ]
-    },
-    {
-      "parameters": {
-        "model": "openai/gpt-oss-120b",
-        "options": {
-          "maxTokensToSample": 4096,
-          "temperature": 0
-        }
-      },
-      "id": "bd0c996a-b759-40eb-8efe-cbb6618319d4",
-      "name": "Groq Chat Model1",
-      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
-      "typeVersion": 1,
-      "position": [
-        512,
-        1568
-      ],
-      "credentials": {
-        "groqApi": {
-          "id": "GO8G0JF59O0zKKmD",
-          "name": "Groq account 2"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsonSchemaExample": "{\n  \"document_type\": \"Invoice\",\n  \"confidence\": 0.95\n}"
-      },
-      "id": "45ebb2a1-9b23-4980-9e28-cf3cd0632054",
-      "name": "Classification Parser1",
-      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
-      "typeVersion": 1.3,
-      "position": [
-        816,
-        1568
+        240,
+        1984
       ]
     },
     {
@@ -319,13 +319,13 @@
         "responseBody": "={{ JSON.stringify($json.output) }}",
         "options": {}
       },
-      "id": "c654cfde-4cf6-46d5-ba67-a20801523b16",
+      "id": "0d1bdcd5-e2ca-4686-a2e9-6fbaf416c9bf",
       "name": "Respond Classification1",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.5,
       "position": [
-        1024,
-        1344
+        -368,
+        1696
       ]
     },
     {
@@ -336,80 +336,18 @@
           "responseCode": 415
         }
       },
-      "id": "97a5dacf-2e68-420c-a5e6-ffc69fa8db82",
+      "id": "c55b0e42-7723-46ac-a9b2-fa0ef9b4f681",
       "name": "Respond Unsupported1",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.5,
       "position": [
-        224,
-        1536
+        -1168,
+        1888
       ]
     }
   ],
   "pinData": {},
   "connections": {
-    "Is Marksheet?": {
-      "main": [
-        [
-          {
-            "node": "Clean Marksheet Text",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Respond Classification1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Clean Marksheet Text": {
-      "main": [
-        [
-          {
-            "node": "Extract Marksheet Data",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Extract Marksheet Data": {
-      "main": [
-        [
-          {
-            "node": "Respond Marksheet",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Groq Extract Model": {
-      "ai_languageModel": [
-        [
-          {
-            "node": "Extract Marksheet Data",
-            "type": "ai_languageModel",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Marksheet Parser": {
-      "ai_outputParser": [
-        [
-          {
-            "node": "Extract Marksheet Data",
-            "type": "ai_outputParser",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Upload Document1": {
       "main": [
         [
@@ -476,14 +414,14 @@
       "main": [
         [
           {
-            "node": "Is Marksheet?",
+            "node": "Is Marksheet?1",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Groq Chat Model1": {
+    "Gemini Chat Model1": {
       "ai_languageModel": [
         [
           {
@@ -504,20 +442,81 @@
           }
         ]
       ]
+    },
+    "Is Marksheet?1": {
+      "main": [
+        [
+          {
+            "node": "Clean Marksheet Text1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Classification1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Marksheet Text1": {
+      "main": [
+        [
+          {
+            "node": "Extract Marksheet Data1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Marksheet Data1": {
+      "main": [
+        [
+          {
+            "node": "Respond Marksheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Extract Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Extract Marksheet Data1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marksheet Parser1": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Extract Marksheet Data1",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "active": true,
+  "active": false,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate",
     "availableInMCP": false
   },
-  "versionId": "d37def3a-1b96-4e26-81d6-d8491dedcdc8",
+  "versionId": "449e971a-980b-4c91-a8de-a857b7fe626c",
   "meta": {
-    "templateCredsSetupCompleted": true,
-    "instanceId": "7acefdfc933bb7536ba0806296f763927114460d7ea2f3fe544325862455ecc5"
+    "instanceId": "30f28ca7d23c6f1e7ca781a1e85ddde73a2323c6c1bbeb71de7c75b005da421a"
   },
   "nodeGroups": [],
-  "id": "wDcYqXmwDjuCsukA",
+  "id": "5Fd87CsnjsBnV3jw",
   "tags": []
 }
